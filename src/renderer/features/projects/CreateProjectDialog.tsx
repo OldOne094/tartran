@@ -3,6 +3,7 @@ import { useMutation } from '@tanstack/react-query'
 import { FolderPlus } from 'lucide-react'
 import type { CreateProjectInput, ProjectSummary, TargetLang } from '../../../shared/types'
 import { useI18n } from '../../i18n/I18nProvider'
+import { api } from '../../lib/ipcClient'
 import { Button, Field, Input, Modal, Select } from '../../components/ui'
 
 export function CreateProjectDialog({
@@ -18,7 +19,7 @@ export function CreateProjectDialog({
   const [targetLang, setTargetLang] = useState<TargetLang>('ar')
 
   const mutation = useMutation({
-    mutationFn: (input: CreateProjectInput) => window.api.projects.create(input),
+    mutationFn: (input: CreateProjectInput) => api.projects.create(input),
     onSuccess: (project) => {
       onClose()
       onCreated(project)

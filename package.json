@@ -2,44 +2,36 @@
   "name": "tartran",
   "version": "0.1.0",
   "description": "Chinese web novel translation management & automation workspace",
-  "main": "./out/main/index.js",
   "license": "MIT",
   "private": true,
   "scripts": {
-    "dev": "electron-vite dev",
-    "build": "electron-vite build",
-    "preview": "electron-vite preview",
-    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:e2e": "npm run build && playwright test",
-    "package": "electron-vite build && electron-builder --dir"
+    "dev": "tauri dev",
+    "dev:web": "vite",
+    "build": "tauri build",
+    "build:web": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "tauri": "tauri"
   },
   "dependencies": {
-    "@google/genai": "2.16.0",
     "@tanstack/react-query": "5.101.4",
-    "better-sqlite3": "13.0.3",
-    "docx": "9.7.1",
-    "exceljs": "4.4.0",
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-dialog": "^2.7.2",
+    "@tauri-apps/plugin-updater": "^2.10.1",
     "lucide-react": "1.31.0",
     "react": "19.2.8",
-    "react-dom": "19.2.8",
-    "zod": "4.4.3"
+    "react-dom": "19.2.8"
   },
   "devDependencies": {
-    "@playwright/test": "1.62.1",
     "@tailwindcss/vite": "^4.3.3",
-    "@types/better-sqlite3": "^7.6.11",
+    "@tauri-apps/cli": "^2.11.4",
     "@types/node": "^24.0.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "5.2.0",
-    "electron": "43.3.0",
-    "electron-builder": "26.15.3",
-    "electron-vite": "5.0.0",
     "tailwindcss": "4.3.3",
     "typescript": "7.0.2",
-    "vite": "7.3.6",
-    "vitest": "4.1.10"
+    "vite": "7.3.6"
   }
 }

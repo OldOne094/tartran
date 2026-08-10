@@ -1,11 +1,13 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { KeyRound, Languages, Save } from 'lucide-react'
+import { open } from '@tauri-apps/plugin-dialog'
+import { check } from '@tauri-apps/plugin-updater'
+import { FolderOpen, KeyRound, Languages, RefreshCw, Save } from 'lucide-react'
 import type { Theme } from '../../../shared/types'
 import { useI18n, useT } from '../../i18n/I18nProvider'
+import { api } from '../../lib/ipcClient'
 import { useSettings } from '../../lib/queries'
 import { Button, Card, Field, Input, Select } from '../../components/ui'
-
 function useSystemTheme(): 'light' | 'dark' {
   const [mode, setMode] = useState<'light' | 'dark'>(() =>
     window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
@@ -28,7 +30,35 @@ export function SettingsPage(): ReactNode {
   const [workspace, setWorkspace] = useState('')
   const [theme, setTheme] = useState<Theme>('system')
   const [apiKeyStatus, setApiKeyStatus] = useState<'loading' | 'configured' | 'none'>('loading')
+  const [apiKeyInput, setApiKeyInput] = useState('')
+  const [updateState, setUpdateState] = useState<
+    | { kind: 'idle' }
+    | { kind: 'checking' }
+    | { kind: 'none' }
+    | { kind: 'available'; version: string }
+    | { kind: 'installing'; version: string }
+    | { kind: 'installed' }
+    | { kind: 'error' }
+  >({ kind: 'idle' })
   const systemTheme = useSystemTheme()
+
+  const apiKeyMutation = useMutation({
+    mutationFn: (key: string) => api.settings.setApiKey(key),
+    onSuccess: () => {
+      setApiKeyInput('')
+      setApiKeyStatus('configured')
+      void queryClient.invalidateQueries({ queryKey: ['apiKey'] })
+      window.setTimeout(() => apiKeyMutation.reset(), 2000)
+    }
+  })
+
+  const clearApiKeyMutation = useMutation({
+    mutationFn: () => api.settings.clearApiKey(),
+    onSuccess: () => {
+      setApiKeyStatus('none')
+      void queryClient.invalidateQueries({ queryKey: ['apiKey'] })
+    }
+  })
 
   useEffect(() => {
     if (data) {
@@ -38,7 +68,7 @@ export function SettingsPage(): ReactNode {
   }, [data])
 
   useEffect(() => {
-    window.api.settings
+    api.settings
       .apiKeyStatus()
       .then((s) => setApiKeyStatus(s.configured ? 'configured' : 'none'))
       .catch(() => setApiKeyStatus('none'))
@@ -51,7 +81,7 @@ export function SettingsPage(): ReactNode {
 
   const updateMutation = useMutation({
     mutationFn: (patch: { workspacePath?: string; theme?: Theme }) =>
-      window.api.settings.update(patch),
+      api.settings.update(patch),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['settings'] })
       window.setTimeout(() => updateMutation.reset(), 2000)
@@ -60,6 +90,42 @@ export function SettingsPage(): ReactNode {
 
   const saveWorkspace = (): void => {
     updateMutation.mutate({ workspacePath: workspace.trim() || undefined })
+  }
+
+  const browseWorkspace = async (): Promise<void> => {
+    const dir = await open({ directory: true, multiple: false })
+    if (typeof dir === 'string' && dir.trim()) {
+      setWorkspace(dir)
+    }
+  }
+
+  const checkForUpdates = async (): Promise<void> => {
+    setUpdateState({ kind: 'checking' })
+    try {
+      const update = await check()
+      if (update) {
+        setUpdateState({ kind: 'available', version: update.version })
+      } else {
+        setUpdateState({ kind: 'none' })
+      }
+    } catch {
+      setUpdateState({ kind: 'error' })
+    }
+  }
+
+  const installUpdate = async (version: string): Promise<void> => {
+    setUpdateState({ kind: 'installing', version })
+    try {
+      const update = await check()
+      if (update) {
+        await update.downloadAndInstall()
+        setUpdateState({ kind: 'installed' })
+      } else {
+        setUpdateState({ kind: 'none' })
+      }
+    } catch {
+      setUpdateState({ kind: 'error' })
+    }
   }
 
   return (
@@ -78,11 +144,23 @@ export function SettingsPage(): ReactNode {
             </h2>
             <div className="flex flex-col gap-2">
               <Field label={t('settings.workspace')} hint={t('settings.workspaceHint')}>
-                <Input
-                  value={workspace}
-                  onChange={(e) => setWorkspace(e.target.value)}
-                  aria-label={t('settings.workspace')}
-                />
+                <div className="flex gap-2">
+                  <Input
+                    value={workspace}
+                    onChange={(e) => setWorkspace(e.target.value)}
+                    aria-label={t('settings.workspace')}
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => void browseWorkspace()}
+                    aria-label={t('settings.browse')}
+                    title={t('settings.browse')}
+                  >
+                    <FolderOpen className="size-4" />
+                    {t('settings.browse')}
+                  </Button>
+                </div>
               </Field>
               <div className="flex items-center gap-3">
                 <Button onClick={saveWorkspace} disabled={updateMutation.isPending}>
@@ -137,14 +215,103 @@ export function SettingsPage(): ReactNode {
               <KeyRound className="size-4 text-indigo-500" />
               {t('settings.apiKey')}
             </h2>
-            <p className="text-sm text-slate-600 dark:text-slate-300">
-              {apiKeyStatus === 'configured'
-                ? t('settings.apiKeyConfigured')
-                : t('settings.apiKeyNotConfigured')}
-            </p>
-            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-              {t('settings.apiKeyHint')}
-            </p>
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+                <span
+                  className={`inline-block size-2 rounded-full ${
+                    apiKeyStatus === 'configured' ? 'bg-emerald-500' : 'bg-slate-400'
+                  }`}
+                />
+                {apiKeyStatus === 'configured'
+                  ? t('settings.apiKeyConfigured')
+                  : t('settings.apiKeyNotConfigured')}
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                {t('settings.apiKeyHint')}
+              </p>
+              {apiKeyStatus === 'configured' ? (
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    onClick={() => clearApiKeyMutation.mutate()}
+                    disabled={clearApiKeyMutation.isPending}
+                  >
+                    {t('settings.apiKeyClear')}
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  <Input
+                    type="password"
+                    value={apiKeyInput}
+                    onChange={(e) => setApiKeyInput(e.target.value)}
+                    placeholder={t('settings.apiKeyPlaceholder')}
+                    aria-label={t('settings.apiKey')}
+                  />
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="secondary"
+                      onClick={() => apiKeyMutation.mutate(apiKeyInput.trim())}
+                      disabled={!apiKeyInput.trim() || apiKeyMutation.isPending}
+                    >
+                      <Save className="size-4" />
+                      {t('settings.apiKeySave')}
+                    </Button>
+                    {apiKeyMutation.isSuccess ? (
+                      <span className="text-xs text-emerald-600 dark:text-emerald-400">
+                        {t('settings.apiKeySaved')}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              )}
+            </div>
+          </Card>
+
+          <Card>
+            <h2 className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+              <RefreshCw className="size-4 text-indigo-500" />
+              {t('updates.title')}
+            </h2>
+            <div className="flex flex-col gap-3">
+              <Button
+                variant="secondary"
+                onClick={() => void checkForUpdates()}
+                disabled={updateState.kind === 'checking' || updateState.kind === 'installing'}
+              >
+                <RefreshCw className="size-4" />
+                {updateState.kind === 'checking' ? t('updates.checking') : t('updates.check')}
+              </Button>
+              {updateState.kind === 'none' ? (
+                <span className="text-sm text-emerald-600 dark:text-emerald-400">
+                  {t('updates.upToDate')}
+                </span>
+              ) : null}
+              {updateState.kind === 'available' || updateState.kind === 'installing' ? (
+                <div className="flex flex-col gap-2">
+                  <span className="text-sm text-slate-700 dark:text-slate-300">
+                    {t('updates.available', { version: updateState.version })}
+                  </span>
+                  <Button
+                    className="self-start"
+                    onClick={() => void installUpdate(updateState.version)}
+                    disabled={updateState.kind === 'installing'}
+                  >
+                    {updateState.kind === 'installing'
+                      ? t('updates.installing')
+                      : t('updates.install')}
+                  </Button>
+                </div>
+              ) : null}
+              {updateState.kind === 'installed' ? (
+                <span className="text-sm text-emerald-600 dark:text-emerald-400">
+                  {t('updates.restart')}
+                </span>
+              ) : null}
+              {updateState.kind === 'error' ? (
+                <span className="text-sm text-red-600 dark:text-red-400">{t('updates.error')}</span>
+              ) : null}
+            </div>
           </Card>
         </div>
       )}

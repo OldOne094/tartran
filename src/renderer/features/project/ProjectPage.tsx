@@ -2,8 +2,11 @@ import { useState, type ReactNode } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, BookMarked, FileText, Trash2 } from 'lucide-react'
 import { useI18n } from '../../i18n/I18nProvider'
+import { api } from '../../lib/ipcClient'
 import { useProject } from '../../lib/queries'
-import { Button, ConfirmDialog, EmptyState, ErrorBlock, LoadingBlock } from '../../components/ui'
+import { Button, ConfirmDialog, ErrorBlock, LoadingBlock } from '../../components/ui'
+import { ChaptersTab } from './ChaptersTab'
+import { GlossaryTab } from './GlossaryTab'
 
 type ProjectTab = 'chapters' | 'glossary'
 
@@ -23,7 +26,7 @@ export function ProjectPage({
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => window.api.projects.delete(id),
+    mutationFn: (id: string) => api.projects.delete(id),
     onSuccess: () => {
       setConfirmDelete(false)
       void queryClient.invalidateQueries({ queryKey: ['projects'] })
@@ -94,9 +97,9 @@ export function ProjectPage({
       </div>
 
       {tab === 'chapters' ? (
-        <EmptyState title={t('project.chaptersSoon')} />
+        <ChaptersTab projectId={projectId} />
       ) : (
-        <EmptyState title={t('project.glossarySoon')} />
+        <GlossaryTab projectId={projectId} />
       )}
 
       {confirmDelete ? (

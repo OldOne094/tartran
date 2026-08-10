@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { BookOpenText, Plus, Trash2 } from 'lucide-react'
 import type { ProjectSummary } from '../../../shared/types'
 import { useI18n } from '../../i18n/I18nProvider'
+import { api } from '../../lib/ipcClient'
 import { useProjects } from '../../lib/queries'
 import { Button, ConfirmDialog, EmptyState, ErrorBlock, LoadingBlock } from '../../components/ui'
 import { CreateProjectDialog } from './CreateProjectDialog'
@@ -85,7 +86,7 @@ export function ProjectsPage({
   const [toDelete, setToDelete] = useState<ProjectSummary | null>(null)
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => window.api.projects.delete(id),
+    mutationFn: (id: string) => api.projects.delete(id),
     onSuccess: () => {
       setToDelete(null)
       void queryClient.invalidateQueries({ queryKey: ['projects'] })

@@ -94,13 +94,18 @@ Global (app `userData`): `settings.json`, `projects.json` (registry), `api-keys.
 
 ```
 source → termDetector (longest-match zh + aliases, en/ar on translation)
-       → promptBuilder (system + project instructions + relevant glossary + optional context + source)
-       → rateLimiter (token bucket) → GeminiProvider
-       → validation (zod; JSON fallback = plain-text retry)
+       → chunker (smart: ~350 units Chinese / ~500 words Latin, sentence-aware)
+       → promptBuilder (system + project instructions + relevant glossary + chunk part)
+       → rateLimiter (token bucket) + inter-request delay → GeminiProvider
+       → validation (JSON; plain-text fallback)
+       → reassembly (chunks joined back into full chapter)
        → suggestions (pending) → user approval → glossary
 ```
 - Only terms actually present in the chapter are sent (capped), never the whole glossary.
-- Oversized chapters chunk at paragraph level (deterministic).
+- Smart chunking: splits at paragraph boundaries first, then at sentence boundaries (。！？；.!?;…); never mid-sentence when avoidable. Chinese budgets ~350 units (per CJK char), Latin ~500 words.
+- Free-tier limits: 1.5s pause between chunk requests + token-bucket limiter; on HTTP 429 the pipeline retries with exponential backoff (5s, 10s, 20s) up to 3 times, then surfaces the quota error.
+- Token consumption per run is summed from `usageMetadata` (prompt + candidates) and reported to the UI. Note: Gemini exposes no public "remaining quota" endpoint — the app shows tokens used and surfaces 429 quota messages; remaining free-tier quota is only visible in AI Studio.
+- Progress is streamed to the renderer via `translation:progress` Tauri events (chapterId, current, total, percent) for the progress bar.
 
 ## [GLOSSARY_SYSTEM]
 
@@ -134,7 +139,7 @@ source → termDetector (longest-match zh + aliases, en/ar on translation)
 - Google Docs/Sheets integration: designed, not implemented (deferred milestone).
 - CodeMirror editor upgrade: deferred until measured perf need.
 - Security path guards (`security.ts`): pending M2 file operations.
-- API-key UI in Settings: pending M4 (storage layer + IPC exist since M1).
+- API-key UI in Settings: shipped with M4 (storage layer + IPC exist since M1).
 - Theme dark variants: partial polish, complete in M6.
 - TypeScript 7.0.2: if any tooling friction in later milestones, pin TS 5.9.x.
 - Full Arabic i18n coverage across all UI strings: maintained per milestone; audit in M6.
@@ -143,8 +148,8 @@ source → termDetector (longest-match zh + aliases, en/ar on translation)
 ### Milestone progress
 
 - [x] **M1 — Project Foundation**: app boots; project CRUD persists across restarts; secure key storage scaffold; bilingual i18n scaffold.
-- [ ] M2 — Chapters (import/split/search/editor/statuses)
-- [ ] M3 — Glossary (CRUD/search/detection/prompt inclusion)
-- [ ] M4 — Gemini integration + translation pipeline + suggestions review
-- [ ] M5 — Export (DOCX/XLSX/copy)
-- [ ] M6 — Polish, Arabic/RTL completion, packaging
+- [x] **M2 — Chapters**: import (auto/marker/paragraph split), FTS5 trigram search, editor, statuses, CRUD.
+- [x] **M3 — Glossary**: CRUD + FTS search, term detection (longest-match zh/aliases), prompt inclusion, locked entries.
+- [x] **M4 — Gemini**: LLM provider (Gemini), rate limiter, chunked translation pipeline, JSON validation + plain-text fallback, suggestion review (approve → glossary).
+- [x] **M5 — Export**: DOCX (RTL for Arabic), XLSX glossary, clean TXT copy.
+- [ ] M6 — Polish, Arabic/RTL completion, packaging (NSIS/portable), full Arabic i18n audit, UI test pass.

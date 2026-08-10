@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { api } from '../lib/ipcClient'
 import { dictionaries, type Locale, type TKey } from './strings'
 
 interface I18nContextValue {
@@ -15,7 +16,7 @@ export function I18nProvider({ children }: { children: ReactNode }): ReactNode {
 
   useEffect(() => {
     let cancelled = false
-    window.api.settings
+    api.settings
       .get()
       .then((s) => {
         if (!cancelled && (s.uiLanguage === 'ar' || s.uiLanguage === 'en')) {
@@ -35,7 +36,7 @@ export function I18nProvider({ children }: { children: ReactNode }): ReactNode {
 
   const setLocale = (next: Locale): void => {
     setLocaleState(next)
-    window.api.settings.update({ uiLanguage: next }).catch(() => {})
+    api.settings.update({ uiLanguage: next }).catch(() => {})
   }
 
   const t = (key: TKey, vars?: Record<string, string | number>): string => {
