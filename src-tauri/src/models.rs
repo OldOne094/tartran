@@ -6,6 +6,8 @@ pub struct AppSettings {
     pub workspace_path: String,
     pub ui_language: String,
     pub theme: String,
+    pub remove_tashkeel: bool,
+    pub temperature: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,6 +35,8 @@ pub struct UpdateSettingsInput {
     pub workspace_path: Option<String>,
     pub ui_language: Option<String>,
     pub theme: Option<String>,
+    pub remove_tashkeel: Option<bool>,
+    pub temperature: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -230,6 +234,7 @@ pub struct CreateSuggestionInput {
 #[serde(rename_all = "camelCase")]
 pub struct UpdateSuggestionInput {
     pub status: Option<String>,
+    pub zh: Option<String>,
     pub en: Option<String>,
     pub ar: Option<String>,
     pub category: Option<String>,

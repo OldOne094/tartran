@@ -119,13 +119,29 @@ impl<'a> GlossaryManager<'a> {
             .collect())
     }
 
-    /// Terms from glossary whose zh/alias appears in the source text (longest-match).
-    pub fn detect_terms(&self, project_id: &str, source_text: &str, limit: usize) -> AppResult<Vec<GlossaryEntry>> {
+    /// Terms from glossary that appear in the source text (longest-match first).
+    /// When the source is CJK, terms match on their Chinese form (zh) and aliases;
+    /// when it is a Latin script (e.g. English source), terms match on their English
+    /// form (en) and aliases so English sources can reuse the same glossary.
+    pub fn detect_terms(
+        &self,
+        project_id: &str,
+        source_text: &str,
+        limit: usize,
+        source_is_cjk: bool,
+    ) -> AppResult<Vec<GlossaryEntry>> {
         let store = self.store_for(project_id)?;
         let rows = store.list_glossary().map_err(|e| AppError::Db(e))?;
         let mut found: Vec<GlossaryEntry> = Vec::new();
         for row in &rows {
-            let mut matched = source_text.contains(&row.zh);
+            let needle = if source_is_cjk {
+                &row.zh
+            } else if !row.en.is_empty() {
+                &row.en
+            } else {
+                &row.zh
+            };
+            let mut matched = !needle.trim().is_empty() && source_text.contains(needle);
             if !matched {
                 if let Ok(aliases) = serde_json::from_str::<Vec<String>>(&row.aliases) {
                     matched = aliases.iter().any(|a| !a.is_empty() && source_text.contains(a));
@@ -140,6 +156,35 @@ impl<'a> GlossaryManager<'a> {
         }
         found.sort_by(|a, b| b.zh.chars().count().cmp(&a.zh.chars().count()));
         Ok(found)
+    }
+
+    /// Replace `old` with `new` in chapter translations. With `chapter_id` the
+    /// replacement is limited to a single chapter; otherwise it applies to all.
+    pub fn replace_in_translations(
+        &self,
+        project_id: &str,
+        old: &str,
+        new: &str,
+        chapter_id: Option<&str>,
+    ) -> AppResult<usize> {
+        let store = self.store_for(project_id)?;
+        let now = Utc::now().to_rfc3339();
+        let changed = store
+            .replace_in_translations(old, new, chapter_id, &now)
+            .map_err(|e| AppError::UpdateFailed(e.to_string()))?;
+        if changed > 0 {
+            self.logger.info(
+                "glossary:replace",
+                Some(&serde_json::json!({
+                    "projectId": project_id,
+                    "old": old,
+                    "new": new,
+                    "chapterId": chapter_id,
+                    "changed": changed
+                })),
+            );
+        }
+        Ok(changed)
     }
 }
 

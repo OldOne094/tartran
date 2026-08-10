@@ -44,7 +44,9 @@ export const api: RendererApi = {
     update: (projectId, glossaryId, patch) =>
       call(IPC.glossaryUpdate, { projectId, glossaryId, patch }),
     delete: (projectId, glossaryId) => call(IPC.glossaryDelete, { projectId, glossaryId }),
-    search: (projectId, query) => call(IPC.glossarySearch, { projectId, query })
+    search: (projectId, query) => call(IPC.glossarySearch, { projectId, query }),
+    replace: (projectId, oldValue, newValue, chapterId) =>
+      call(IPC.glossaryReplace, { projectId, oldValue, newValue, chapterId })
   },
   suggestions: {
     list: (projectId, chapterId) => call(IPC.suggestionsList, { projectId, chapterId }),

@@ -74,3 +74,26 @@ pub fn glossary_search(state: State<'_, AppState>, project_id: String, query: St
         Err(e) => err(e.code(), &e.to_string()),
     }
 }
+
+/// Replace the given term string inside chapter translations. `chapter_id` is
+/// optional: when omitted the replacement applies to all chapters.
+#[tauri::command]
+pub fn glossary_replace(
+    state: State<'_, AppState>,
+    project_id: String,
+    old_value: String,
+    new_value: String,
+    chapter_id: Option<String>,
+) -> Value {
+    if project_id.trim().is_empty() || old_value.trim().is_empty() {
+        return err("INVALID_INPUT", "Invalid glossary replacement");
+    }
+    if new_value.chars().count() > 2000 {
+        return err("INVALID_INPUT", "Replacement value too long");
+    }
+    let manager = manager(&state);
+    match manager.replace_in_translations(&project_id, &old_value, &new_value, chapter_id.as_deref()) {
+        Ok(changed) => ok(serde_json::json!({ "changed": changed })),
+        Err(e) => err(e.code(), &e.to_string()),
+    }
+}

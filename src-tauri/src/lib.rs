@@ -7,6 +7,7 @@ mod logger;
 mod models;
 mod pipeline;
 mod storage;
+mod text;
 
 use llm::rate_limiter::RateLimiter;
 use logger::Logger;
@@ -74,6 +75,7 @@ pub fn run() {
             commands::glossary::glossary_update,
             commands::glossary::glossary_delete,
             commands::glossary::glossary_search,
+            commands::glossary::glossary_replace,
             commands::suggestions::suggestions_list,
             commands::suggestions::suggestions_create,
             commands::suggestions::suggestions_update,

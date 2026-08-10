@@ -9,6 +9,7 @@ import type {
   CreateSuggestionInput,
   ExportFile,
   GlossaryEntry,
+  GlossaryReplaceResult,
   GlossarySearchResult,
   ImportChaptersInput,
   ImportChaptersResult,
@@ -47,6 +48,7 @@ export const IPC = {
   glossaryUpdate: 'glossary_update',
   glossaryDelete: 'glossary_delete',
   glossarySearch: 'glossary_search',
+  glossaryReplace: 'glossary_replace',
   suggestionsList: 'suggestions_list',
   suggestionsCreate: 'suggestions_create',
   suggestionsUpdate: 'suggestions_update',
@@ -97,6 +99,12 @@ export interface RendererApi {
     update(projectId: string, glossaryId: string, patch: UpdateGlossaryInput): Promise<GlossaryEntry>
     delete(projectId: string, glossaryId: string): Promise<void>
     search(projectId: string, query: string): Promise<GlossarySearchResult[]>
+    replace(
+      projectId: string,
+      oldValue: string,
+      newValue: string,
+      chapterId?: string
+    ): Promise<GlossaryReplaceResult>
   }
   suggestions: {
     list(projectId: string, chapterId: string): Promise<Suggestion[]>

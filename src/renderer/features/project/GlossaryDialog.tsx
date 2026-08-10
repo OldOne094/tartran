@@ -8,13 +8,17 @@ import { Button, Field, Input, Modal, Select } from '../../components/ui'
 
 const CATEGORIES = ['character', 'location', 'item', 'technique', 'faction', 'other']
 
+type ReplaceScope = 'none' | 'all' | 'chapter'
+
 export function GlossaryDialog({
   projectId,
   entry,
+  chapterId,
   onClose
 }: {
   projectId: string
   entry: GlossaryEntry | null
+  chapterId?: string
   onClose: () => void
 }): ReactNode {
   const t = useT()
@@ -28,6 +32,8 @@ export function GlossaryDialog({
   const [notes, setNotes] = useState('')
   const [aliases, setAliases] = useState('')
   const [locked, setLocked] = useState(false)
+  const [replaceScope, setReplaceScope] = useState<ReplaceScope>('none')
+  const [replaceDone, setReplaceDone] = useState<number | null>(null)
 
   useEffect(() => {
     if (entry) {
@@ -39,6 +45,8 @@ export function GlossaryDialog({
       setAliases(entry.aliases.join(', '))
       setLocked(entry.locked)
     }
+    setReplaceScope('none')
+    setReplaceDone(null)
   }, [entry])
 
   const mutation = useMutation({
@@ -48,9 +56,35 @@ export function GlossaryDialog({
         : api.glossary.create(projectId, input as CreateGlossaryInput),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['glossary', projectId] })
-      onClose()
+      if (isEdit && replaceScope !== 'none') {
+        void runReplacements().then((total) => {
+          setReplaceDone(total)
+          void queryClient.invalidateQueries({ queryKey: ['chapters', projectId] })
+          window.setTimeout(onClose, 1200)
+        })
+      } else {
+        onClose()
+      }
     }
   })
+
+  async function runReplacements(): Promise<number> {
+    if (!isEdit) return 0
+    const oldAr = entry.ar.trim()
+    const newAr = ar.trim()
+    const oldEn = entry.en.trim()
+    const newEn = en.trim()
+    const chapter = replaceScope === 'chapter' ? chapterId : undefined
+    const calls: Array<Promise<{ changed: number }>> = []
+    if (oldAr && newAr && oldAr !== newAr) {
+      calls.push(api.glossary.replace(projectId, oldAr, newAr, chapter))
+    }
+    if (oldEn && newEn && oldEn !== newEn) {
+      calls.push(api.glossary.replace(projectId, oldEn, newEn, chapter))
+    }
+    const results = await Promise.all(calls)
+    return results.reduce((n, r) => n + r.changed, 0)
+  }
 
   const submit = (e: FormEvent): void => {
     e.preventDefault()
@@ -72,6 +106,8 @@ export function GlossaryDialog({
       mutation.mutate(base as CreateGlossaryInput)
     }
   }
+
+  const valueChanged = isEdit && (en !== entry.en || ar !== entry.ar)
 
   return (
     <Modal title={isEdit ? t('glossary.edit') : t('glossary.add')} onClose={onClose}>
@@ -140,6 +176,56 @@ export function GlossaryDialog({
             />
             {t('glossary.locked')}
           </label>
+        ) : null}
+        {isEdit && valueChanged ? (
+          <fieldset className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
+            <legend className="px-1 text-xs font-medium text-slate-600 dark:text-slate-300">
+              {t('editor.replaceLabel')}
+            </legend>
+            <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">{t('editor.replaceHint')}</p>
+            <div className="flex flex-wrap gap-3 text-sm">
+              <label className="flex cursor-pointer items-center gap-1.5">
+                <input
+                  type="radio"
+                  name="replace-scope"
+                  value="none"
+                  checked={replaceScope === 'none'}
+                  onChange={() => setReplaceScope('none')}
+                  className="size-3.5 text-indigo-600"
+                />
+                {t('editor.replaceNone')}
+              </label>
+              <label className="flex cursor-pointer items-center gap-1.5">
+                <input
+                  type="radio"
+                  name="replace-scope"
+                  value="all"
+                  checked={replaceScope === 'all'}
+                  onChange={() => setReplaceScope('all')}
+                  className="size-3.5 text-indigo-600"
+                />
+                {t('editor.replaceAll')}
+              </label>
+              {chapterId ? (
+                <label className="flex cursor-pointer items-center gap-1.5">
+                  <input
+                    type="radio"
+                    name="replace-scope"
+                    value="chapter"
+                    checked={replaceScope === 'chapter'}
+                    onChange={() => setReplaceScope('chapter')}
+                    className="size-3.5 text-indigo-600"
+                  />
+                  {t('editor.replaceChapter')}
+                </label>
+              ) : null}
+            </div>
+            {replaceDone !== null ? (
+              <p className="mt-2 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                {t('editor.replaceDone', { count: replaceDone })}
+              </p>
+            ) : null}
+          </fieldset>
         ) : null}
         {mutation.isError ? (
           <p className="text-sm text-red-600 dark:text-red-400">{t('common.error')}</p>

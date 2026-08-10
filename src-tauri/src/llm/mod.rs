@@ -32,6 +32,7 @@ pub struct TranslateRequest<'a> {
     pub model: &'a str,
     pub system_prompt: &'a str,
     pub user_prompt: &'a str,
+    pub temperature: f64,
 }
 
 pub struct TranslateResponse {
@@ -85,7 +86,7 @@ impl GeminiProvider {
             "system_instruction": { "parts": [{ "text": req.system_prompt }] },
             "contents": [{ "parts": [{ "text": req.user_prompt }] }],
             "generationConfig": {
-                "temperature": 0.7,
+                "temperature": req.temperature,
                 "maxOutputTokens": 65000
             }
         });

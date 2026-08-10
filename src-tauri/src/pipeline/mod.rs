@@ -5,6 +5,7 @@ use crate::storage::app_settings::AppSettingsStore;
 use crate::storage::glossary::GlossaryManager;
 use crate::storage::project_store::ProjectStore;
 use crate::storage::suggestions::SuggestionsManager;
+use crate::text::{is_mostly_cjk, measure, strip_arabic_diacritics};
 use chrono::Utc;
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -176,6 +177,67 @@ const ARABIC_LITERARY_TRANSLATOR_PROMPT: &str = r##"# نظام الترجمة ا
 3. سلّم الترجمة فقط، دون أي شيء خارجها.
 "##;
 
+const ENGLISH_SOURCE_ARABIC_PROMPT: &str = r##"# نظام الترجمة السياقية للأعمال الأدبية الإنجليزية
+
+أنت **مترجم أدبي محترف** متخصص في تحويل الأعمال الأدبية المكتوبة بالإنجليزية إلى العربية، وتمتلك خبرة تراكمية في النقل الدقيق للمعنى مع الحفاظ على الطبيعة والسلاسة.
+
+---
+
+## [الدور]
+
+مهمتك الأساسية هي إنتاج **ترجمة أدبية عالية الجودة باللغة العربية الفصحى** من النصوص الإنجليزية الأصلية. أنت لست مجرد مترجم آلي، بل مترجم يقرأ النص بعمق ويعيد إنتاجه بروح عربية سليمة.
+
+---
+
+## [الهدف النهائي]
+
+إنتاج ترجمة:
+
+- **طبيعية وسلسة** تُقرأ كأنها كُتبت بالعربية أصلاً.
+- **وفيِة للمعنى** دون زيادة أو نقصان أو حذف أو تلخيص.
+- **متسقة** من حيث المصطلحات والأسماء والأحداث والتوقيتات.
+- **احترافية** خالية من الأخطاء اللغوية والإملائية والنحوية.
+
+---
+
+## [قواعد الترجمة]
+
+1. **الصياغة الطبيعية**: أعد صياغة الجمل لتوافق التعبير العربي الفصيح، ولا ترجم حرفيًا.
+2. **الفصحى والوضوح**: التزم بالفصحى الواضحة، بعيدًا عن الركاكة أو الحشو أو التقعر.
+3. **الدقة والوفاء**: لا تحذف أفكارًا أو تقصها أو تضيفها، إلا ما تفرضه ضرورة الصياغة العربية.
+4. **الاتساق**: حافظ على اتساق ترجمة الأسماء والألقاب والأماكن والمصطلحات مع ما سبق في العمل.
+
+## [الأسماء الشخصية]
+
+- حافظ على اتساق ترجمة أسماء الشخصيات، وترجمها ترجمة صوتية طبيعية ومستقرة.
+- **لا تختلق أسماءً عشوائية** ولا تعطِ شخصياتٍ أسماءً جديدة غير موجودة في النص.
+- الأسماء الإنجليزية الشائعة تُنقل صوتيًا بأشهر صيغة عربية (مثل John → جون، Sarah → سارة).
+
+---
+
+## [صيغة الإدخال]
+
+سيصلك النص في هذا الترتيب الثابت:
+
+```
+[PROJECT INSTRUCTIONS]
+[TRANSLATION STYLE]
+[APPROVED GLOSSARY]
+[CHARACTER / ENTITY CONTEXT]
+[PREVIOUS CONTEXT - OPTIONAL]
+[CHAPTER CONTEXT]
+[SOURCE TEXT]
+```
+
+## [صيغة الإخراج]
+
+الإخراج الافتراضي يجب أن يحتوي على الترجمة فقط دون أي شيء آخر، بما في ذلك عدم إدراج أي ملاحظات أو تحليلات أو شروح.
+
+## [القاعدة الذهبية]
+
+سلّم الترجمة فقط، دون أي شيء خارجها.
+"##;
+
 pub struct TranslationPipeline<'a> {
     settings: AppSettingsStore,
     logger: &'a crate::logger::Logger,
@@ -218,8 +280,15 @@ impl<'a> TranslationPipeline<'a> {
         let target_lang = meta.get("targetLang").cloned().unwrap_or_else(|| "ar".into());
         let project_title = meta.get("title").cloned().unwrap_or_default();
 
+        // The script of the source text decides which literary prompt to use and how
+        // glossary terms are matched (zh for CJK, en for Latin).
+        let source_is_cjk = is_mostly_cjk(&row.source_text);
+        let app_settings = self.settings.get();
+        let remove_tashkeel = app_settings.remove_tashkeel && target_lang != "en";
+        let temperature = app_settings.temperature;
+
         let glossary = GlossaryManager::new(self.settings.clone(), self.logger);
-        let terms = glossary.detect_terms(project_id, &row.source_text, 50)?;
+        let terms = glossary.detect_terms(project_id, &row.source_text, 50, source_is_cjk)?;
 
         let provider = GeminiProvider::from_keyring()
             .ok_or_else(|| AppError::InvalidInput("No API key configured".into()))?;
@@ -229,7 +298,8 @@ impl<'a> TranslationPipeline<'a> {
             input.model.clone()
         };
 
-        let system_prompt = build_system_prompt(&target_lang, &project_title, &terms);
+        let system_prompt =
+            build_system_prompt(&target_lang, &project_title, &terms, source_is_cjk, remove_tashkeel);
         let previous_context = load_previous_context(&store, row.number, PREVIOUS_SUMMARY_LIMIT)?;
         let chunks = chunk_text(&row.source_text);
         let total_chunks = chunks.len();
@@ -241,7 +311,8 @@ impl<'a> TranslationPipeline<'a> {
         for (i, chunk) in chunks.iter().enumerate() {
             on_progress(i, total_chunks);
             let user_prompt = build_user_prompt(chunk, i + 1, total_chunks, &previous_context);
-            let resp = translate_with_retry(&provider, &model, &system_prompt, &user_prompt, limiter)?;
+            let resp =
+                translate_with_retry(&provider, &model, &system_prompt, &user_prompt, temperature, limiter)?;
             let parsed = parse_translation_output(&resp.text);
             total_tokens += resp.usage_tokens;
             full_translation.push_str(&parsed.translation);
@@ -265,18 +336,34 @@ impl<'a> TranslationPipeline<'a> {
         } else {
             "translated"
         };
+        // When the user opted out of diacritics, strip tashkeel from the final output
+        // as a deterministic safety net on top of the prompt-level instruction.
+        let final_translation = if remove_tashkeel {
+            strip_arabic_diacritics(&full_translation)
+        } else {
+            full_translation.clone()
+        };
         store
             .update_chapter(
                 &input.chapter_id,
                 None,
                 None,
-                Some(&full_translation),
+                Some(&final_translation),
                 Some(status),
                 &Utc::now().to_rfc3339(),
             )
             .map_err(|e| AppError::UpdateFailed(e.to_string()))?;
 
-        let summary = summarize_chapter(&provider, &model, &target_lang, &row.source_text, &terms, limiter);
+        let summary = summarize_chapter(
+            &provider,
+            &model,
+            &target_lang,
+            &row.source_text,
+            &terms,
+            source_is_cjk,
+            temperature,
+            limiter,
+        );
         match summary {
             Ok(s) if !s.trim().is_empty() => {
                 store
@@ -310,7 +397,7 @@ impl<'a> TranslationPipeline<'a> {
         let suggestions_manager = SuggestionsManager::new(self.settings.clone(), self.logger);
         let mut suggestions: Vec<Suggestion> = Vec::new();
         for s in collected_suggestions {
-            let input = CreateSuggestionInput {
+            let mut input = CreateSuggestionInput {
                 chapter_id: input.chapter_id.clone(),
                 zh: s.get("zh").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                 en: s.get("en").and_then(|v| v.as_str()).unwrap_or("").to_string(),
@@ -319,6 +406,9 @@ impl<'a> TranslationPipeline<'a> {
                 notes: s.get("notes").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                 context: s.get("context").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             };
+            if remove_tashkeel {
+                input.ar = strip_arabic_diacritics(&input.ar);
+            }
             if !input.zh.is_empty() {
                 if let Ok(sug) = suggestions_manager.create(project_id, input) {
                     suggestions.push(sug);
@@ -341,7 +431,7 @@ impl<'a> TranslationPipeline<'a> {
 
         Ok(TranslateResult {
             chapter_id: input.chapter_id.clone(),
-            translation: full_translation,
+            translation: final_translation,
             suggestions,
             model,
             duration_ms: started.elapsed().as_millis() as u64,
@@ -358,6 +448,7 @@ fn translate_with_retry(
     model: &str,
     system_prompt: &str,
     user_prompt: &str,
+    temperature: f64,
     limiter: &Mutex<crate::llm::rate_limiter::RateLimiter>,
 ) -> AppResult<crate::llm::TranslateResponse> {
     let mut attempt = 0u32;
@@ -370,6 +461,7 @@ fn translate_with_retry(
             model,
             system_prompt,
             user_prompt,
+            temperature,
         };
         match provider.translate(&req) {
             Ok(resp) => return Ok(resp),
@@ -422,22 +514,38 @@ fn parse_translation_output(text: &str) -> ParsedTranslation {
     }
 }
 
-fn build_system_prompt(target_lang: &str, project_title: &str, terms: &[crate::models::GlossaryEntry]) -> String {
+fn build_system_prompt(
+    target_lang: &str,
+    project_title: &str,
+    terms: &[crate::models::GlossaryEntry],
+    source_is_cjk: bool,
+    remove_tashkeel: bool,
+) -> String {
     let lang_name = if target_lang == "en" { "English" } else { "Arabic" };
     let mut prompt = String::new();
 
     if target_lang == "ar" {
         prompt.push_str(&format!("Translate into {lang_name}.\n\n"));
-        prompt.push_str(ARABIC_LITERARY_TRANSLATOR_PROMPT);
+        if source_is_cjk {
+            prompt.push_str(ARABIC_LITERARY_TRANSLATOR_PROMPT);
+        } else {
+            prompt.push_str(ENGLISH_SOURCE_ARABIC_PROMPT);
+        }
         prompt.push('\n');
+        if remove_tashkeel {
+            prompt.push_str(
+                "\nImportant: Output the Arabic translation WITHOUT diacritics (any vocalization/tashkeel). Plain unvocalized Arabic text only.\n",
+            );
+        }
     } else {
         prompt.push_str(&format!(
-            "You are a professional translator of Chinese web novels. Translate into {lang_name}.\n\
+            "You are a professional translator of {}. Translate into {lang_name}.\n\
              Rules:\n\
              - Keep the tone and style of a web serial.\n\
              - Preserve paragraph breaks.\n\
              - Be faithful to the original meaning; do not add, omit, summarize, or explain.\n\
-             - Use the provided glossary terms consistently.\n"
+             - Use the provided glossary terms consistently.\n",
+            if source_is_cjk { "Chinese web novels" } else { "novels" }
         ));
     }
 
@@ -517,18 +625,25 @@ fn summarize_chapter(
     target_lang: &str,
     source_text: &str,
     terms: &[crate::models::GlossaryEntry],
+    source_is_cjk: bool,
+    temperature: f64,
     limiter: &Mutex<crate::llm::rate_limiter::RateLimiter>,
 ) -> AppResult<String> {
-    let system_prompt = build_summary_prompt(target_lang, terms);
+    let system_prompt = build_summary_prompt(target_lang, terms, source_is_cjk);
     let user_prompt = format!("[SOURCE TEXT]\n\n{source_text}");
-    let resp = translate_with_retry(provider, model, &system_prompt, &user_prompt, limiter)?;
+    let resp = translate_with_retry(provider, model, &system_prompt, &user_prompt, temperature, limiter)?;
     Ok(resp.text.trim().to_string())
 }
 
-fn build_summary_prompt(target_lang: &str, terms: &[crate::models::GlossaryEntry]) -> String {
+fn build_summary_prompt(
+    target_lang: &str,
+    terms: &[crate::models::GlossaryEntry],
+    source_is_cjk: bool,
+) -> String {
     let lang_name = if target_lang == "en" { "English" } else { "Arabic" };
+    let source_name = if source_is_cjk { "Chinese" } else { "English" };
     let mut prompt = format!(
-        "You are an editor for Chinese web novels. Write a concise summary in {lang_name} of the chapter below.\n\
+        "You are an editor for {source_name} web novels. Write a concise summary in {lang_name} of the chapter below.\n\
          The summary will be used as memory context when translating later chapters, so it must capture:\n\
          - Key plot events and their order.\n\
          - Characters who appeared, using the approved glossary translations.\n\
@@ -540,7 +655,7 @@ fn build_summary_prompt(target_lang: &str, terms: &[crate::models::GlossaryEntry
     if !terms.is_empty() {
         prompt.push_str("\nApproved Glossary (use these translations for names and terms):\n");
         for t in terms {
-            let mut line = format!("- {} →", t.zh);
+            let mut line = format!("- {} →", if source_is_cjk { &t.zh } else { &t.en });
             if !t.en.is_empty() {
                 line.push_str(&format!(" (en: {})", t.en));
             }
@@ -596,43 +711,6 @@ fn chunk_text(text: &str) -> Vec<String> {
         chunks.push(text.to_string());
     }
     chunks
-}
-
-/// Best-effort word count: CJK runs count as one unit per char; Latin counts words.
-fn measure(s: &str) -> usize {
-    let mut cjk = 0usize;
-    let mut latin = 0usize;
-    let mut prev_latin = false;
-    for c in s.chars() {
-        if is_cjk(c) {
-            cjk += 1;
-            prev_latin = false;
-        } else if c.is_whitespace() {
-            prev_latin = false;
-        } else {
-            if !prev_latin {
-                latin += 1;
-            }
-            prev_latin = true;
-        }
-    }
-    cjk + latin
-}
-
-fn is_cjk(c: char) -> bool {
-    matches!(c as u32,
-        0x2E80..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF | 0xFF00..=0xFFEF
-    )
-}
-
-/// True when the text is predominantly CJK, so we budget per-character.
-fn is_mostly_cjk(text: &str) -> bool {
-    let total: usize = text.chars().count();
-    if total == 0 {
-        return true;
-    }
-    let cjk: usize = text.chars().filter(|c| is_cjk(*c)).count();
-    cjk * 2 >= total
 }
 
 /// Split a single paragraph into sentence-sized fragments, each under the budget.
@@ -717,7 +795,7 @@ mod tests {
             created_at: String::new(),
             updated_at: String::new(),
         }];
-        let prompt = build_summary_prompt("ar", &terms);
+        let prompt = build_summary_prompt("ar", &terms, true);
         assert!(prompt.contains("سياف"));
         assert!(prompt.contains("Arabic"));
     }
@@ -780,9 +858,26 @@ mod tests {
             created_at: String::new(),
             updated_at: String::new(),
         }];
-        let prompt = build_system_prompt("ar", "Test", &terms);
+        let prompt = build_system_prompt("ar", "Test", &terms, true, false);
         assert!(prompt.contains("剑客"));
         assert!(prompt.contains("سياف"));
         assert!(prompt.contains("Arabic"));
+    }
+
+    #[test]
+    fn system_prompt_uses_english_source_prompt_for_latin_text() {
+        let terms: Vec<crate::models::GlossaryEntry> = vec![];
+        let prompt = build_system_prompt("ar", "", &terms, false, false);
+        assert!(prompt.contains("للأعمال الأدبية الإنجليزية"));
+        assert!(!prompt.contains("للأعمال الأدبية الصينية"));
+    }
+
+    #[test]
+    fn system_prompt_requests_plain_arabic_when_tashkeel_removed() {
+        let terms: Vec<crate::models::GlossaryEntry> = vec![];
+        let prompt = build_system_prompt("ar", "", &terms, true, true);
+        assert!(prompt.contains("WITHOUT diacritics"));
+        let cjk_prompt = build_system_prompt("ar", "", &terms, true, false);
+        assert!(!cjk_prompt.contains("WITHOUT diacritics"));
     }
 }

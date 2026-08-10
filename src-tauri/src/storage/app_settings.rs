@@ -12,6 +12,26 @@ pub struct RegistryEntry {
     pub created_at: String,
 }
 
+/// Temperature bounds: lower keeps translations literal/mechanical,
+/// higher allows more natural rephrasing. Kept within Gemini's useful range.
+pub const TEMPERATURE_MIN: f64 = 0.3;
+pub const TEMPERATURE_MAX: f64 = 0.8;
+pub const TEMPERATURE_DEFAULT: f64 = 0.7;
+
+fn clamp_temperature(t: f64) -> f64 {
+    t.clamp(TEMPERATURE_MIN, TEMPERATURE_MAX).round1()
+}
+
+trait Round1 {
+    fn round1(self) -> f64;
+}
+
+impl Round1 for f64 {
+    fn round1(self) -> f64 {
+        (self * 10.0).round() / 10.0
+    }
+}
+
 #[derive(Clone)]
 pub struct AppSettingsStore {
     base_dir: PathBuf,
@@ -46,10 +66,21 @@ impl AppSettingsStore {
             Some("light") => "light",
             _ => "system",
         };
+        let remove_tashkeel = raw
+            .get("removeTashkeel")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let temperature = raw
+            .get("temperature")
+            .and_then(|v| v.as_f64())
+            .map(clamp_temperature)
+            .unwrap_or(TEMPERATURE_DEFAULT);
         AppSettings {
             workspace_path,
             ui_language: ui_language.to_string(),
             theme: theme.to_string(),
+            remove_tashkeel,
+            temperature,
         }
     }
 
@@ -59,6 +90,11 @@ impl AppSettingsStore {
             workspace_path: patch.workspace_path.clone().unwrap_or(current.workspace_path),
             ui_language: patch.ui_language.clone().unwrap_or(current.ui_language),
             theme: patch.theme.clone().unwrap_or(current.theme),
+            remove_tashkeel: patch.remove_tashkeel.unwrap_or(current.remove_tashkeel),
+            temperature: patch
+                .temperature
+                .map(clamp_temperature)
+                .unwrap_or(current.temperature),
         };
         write_json_atomic(&self.settings_path, &next);
         next
@@ -131,6 +167,8 @@ mod tests {
         assert_eq!(s.workspace_path, "");
         assert_eq!(s.ui_language, "en");
         assert_eq!(s.theme, "system");
+        assert!(!s.remove_tashkeel);
+        assert_eq!(s.temperature, TEMPERATURE_DEFAULT);
     }
 
     #[test]
@@ -140,10 +178,35 @@ mod tests {
             workspace_path: None,
             ui_language: Some("ar".into()),
             theme: Some("dark".into()),
+            remove_tashkeel: Some(true),
+            temperature: Some(0.4),
         });
         let reopened = AppSettingsStore::new(store.base_dir.clone());
         assert_eq!(reopened.get().ui_language, "ar");
         assert_eq!(reopened.get().theme, "dark");
+        assert!(reopened.get().remove_tashkeel);
+        assert_eq!(reopened.get().temperature, 0.4);
+    }
+
+    #[test]
+    fn temperature_is_clamped_to_bounds() {
+        let store = AppSettingsStore::new(base_dir());
+        store.update(&UpdateSettingsInput {
+            workspace_path: None,
+            ui_language: None,
+            theme: None,
+            remove_tashkeel: None,
+            temperature: Some(0.05),
+        });
+        assert_eq!(store.get().temperature, TEMPERATURE_MIN);
+        store.update(&UpdateSettingsInput {
+            workspace_path: None,
+            ui_language: None,
+            theme: None,
+            remove_tashkeel: None,
+            temperature: Some(0.99),
+        });
+        assert_eq!(store.get().temperature, TEMPERATURE_MAX);
     }
 
     #[test]

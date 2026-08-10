@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { open } from '@tauri-apps/plugin-dialog'
 import { check } from '@tauri-apps/plugin-updater'
-import { FolderOpen, KeyRound, Languages, RefreshCw, Save } from 'lucide-react'
+import { FolderOpen, Gauge, KeyRound, Languages, RefreshCw, Save } from 'lucide-react'
 import type { Theme } from '../../../shared/types'
 import { useI18n, useT } from '../../i18n/I18nProvider'
 import { api } from '../../lib/ipcClient'
@@ -29,6 +29,8 @@ export function SettingsPage(): ReactNode {
 
   const [workspace, setWorkspace] = useState('')
   const [theme, setTheme] = useState<Theme>('system')
+  const [removeTashkeel, setRemoveTashkeel] = useState(false)
+  const [temperature, setTemperature] = useState(0.7)
   const [apiKeyStatus, setApiKeyStatus] = useState<'loading' | 'configured' | 'none'>('loading')
   const [apiKeyInput, setApiKeyInput] = useState('')
   const [updateState, setUpdateState] = useState<
@@ -64,6 +66,8 @@ export function SettingsPage(): ReactNode {
     if (data) {
       setWorkspace(data.workspacePath)
       setTheme(data.theme)
+      setRemoveTashkeel(data.removeTashkeel)
+      setTemperature(data.temperature)
     }
   }, [data])
 
@@ -80,8 +84,12 @@ export function SettingsPage(): ReactNode {
   }, [theme, systemTheme])
 
   const updateMutation = useMutation({
-    mutationFn: (patch: { workspacePath?: string; theme?: Theme }) =>
-      api.settings.update(patch),
+    mutationFn: (patch: {
+      workspacePath?: string
+      theme?: Theme
+      removeTashkeel?: boolean
+      temperature?: number
+    }) => api.settings.update(patch),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['settings'] })
       window.setTimeout(() => updateMutation.reset(), 2000)
@@ -208,6 +216,66 @@ export function SettingsPage(): ReactNode {
               <option value="light">{t('settings.theme.light')}</option>
               <option value="dark">{t('settings.theme.dark')}</option>
             </Select>
+          </Card>
+
+          <Card>
+            <h2 className="mb-4 text-sm font-semibold text-slate-900 dark:text-slate-100">
+              {t('settings.translation')}
+            </h2>
+            <label className="flex cursor-pointer items-start gap-3">
+              <input
+                type="checkbox"
+                checked={removeTashkeel}
+                onChange={(e) => {
+                  setRemoveTashkeel(e.target.checked)
+                  updateMutation.mutate({ removeTashkeel: e.target.checked })
+                }}
+                className="mt-0.5 size-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                aria-label={t('settings.removeTashkeel')}
+              />
+              <span className="flex flex-col gap-0.5">
+                <span className="text-sm text-slate-700 dark:text-slate-200">
+                  {t('settings.removeTashkeel')}
+                </span>
+                <span className="text-xs text-slate-500 dark:text-slate-400">
+                  {t('settings.removeTashkeelHint')}
+                </span>
+              </span>
+            </label>
+            <div className="mt-4 flex items-start gap-3">
+              <Gauge className="mt-0.5 size-4 shrink-0 text-indigo-500" />
+              <div className="flex w-full flex-col gap-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-slate-700 dark:text-slate-200">
+                    {t('settings.temperature')}
+                  </span>
+                  <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-xs font-medium tabular-nums text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                    {temperature.toFixed(1)}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={0.3}
+                  max={0.8}
+                  step={0.1}
+                  value={temperature}
+                  onChange={(e) => {
+                    const v = Number(e.target.value)
+                    setTemperature(v)
+                    updateMutation.mutate({ temperature: v })
+                  }}
+                  className="w-full accent-indigo-600"
+                  aria-label={t('settings.temperature')}
+                />
+                <div className="flex justify-between text-[11px] text-slate-400 dark:text-slate-500">
+                  <span>{t('settings.temperature.literal')}</span>
+                  <span>{t('settings.temperature.creative')}</span>
+                </div>
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                  {t('settings.temperatureHint')}
+                </p>
+              </div>
+            </div>
           </Card>
 
           <Card>

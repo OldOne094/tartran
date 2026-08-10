@@ -1,13 +1,14 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { Check, Download, FileText, Languages, Sparkles, X } from 'lucide-react'
+import { Check, Download, FileText, Languages, Pencil, Sparkles, X } from 'lucide-react'
 import type { ChapterStatus, Suggestion, TranslationProgress } from '../../../shared/types'
 import { useI18n, useT } from '../../i18n/I18nProvider'
+import type { TKey } from '../../i18n/strings'
 import { api } from '../../lib/ipcClient'
 import { useChapter, useModels, useSuggestions } from '../../lib/queries'
 import { downloadExportFile } from '../../lib/download'
-import { Button, ErrorBlock, LoadingBlock } from '../../components/ui'
+import { Button, ErrorBlock, Input, LoadingBlock, Modal, Select } from '../../components/ui'
 import { ProgressBar } from '../../components/ProgressBar'
 import { StatusBadge } from './StatusBadge'
 
@@ -32,6 +33,7 @@ export function ChapterEditor({
   const [apiKeyStatus, setApiKeyStatus] = useState<'loading' | 'configured' | 'none'>('loading')
   const [suggestions, setSuggestions] = useState<Suggestion[]>([])
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [editingSuggestion, setEditingSuggestion] = useState<Suggestion | null>(null)
   const [progress, setProgress] = useState<TranslationProgress | null>(null)
   const [tokensUsed, setTokensUsed] = useState<number | null>(null)
   const [translateError, setTranslateError] = useState<string | null>(null)
@@ -370,6 +372,15 @@ export function ChapterEditor({
                 <div className="flex shrink-0 gap-2">
                   <Button
                     variant="secondary"
+                    className="px-2.5 py-1 text-xs"
+                    onClick={() => setEditingSuggestion(s)}
+                    title={t('editor.editSuggestion')}
+                  >
+                    <Pencil className="size-3.5" />
+                    {t('editor.editSuggestion')}
+                  </Button>
+                  <Button
+                    variant="secondary"
                     className="px-2.5 py-1 text-xs text-emerald-600 dark:text-emerald-400"
                     onClick={() => approve(s)}
                   >
@@ -391,6 +402,24 @@ export function ChapterEditor({
         )}
       </div>
 
+      {editingSuggestion ? (
+        <SuggestionEditDialog
+          projectId={projectId}
+          chapterId={chapterId}
+          suggestion={editingSuggestion}
+          onClose={() => setEditingSuggestion(null)}
+          onDone={(updated) => {
+            setEditingSuggestion(null)
+            setSuggestions((prev) =>
+              prev.map((s) => (s.id === updated.id ? updated : s))
+            )
+            void queryClient.invalidateQueries({ queryKey: ['glossary', projectId] })
+            void queryClient.invalidateQueries({ queryKey: ['chapters', projectId] })
+            void queryClient.invalidateQueries({ queryKey: ['chapter', projectId] })
+          }}
+        />
+      ) : null}
+
       {confirmDelete ? (
         <ModalConfirm
           title={t('chapters.deleteConfirmTitle')}
@@ -401,6 +430,131 @@ export function ChapterEditor({
         />
       ) : null}
     </div>
+  )
+}
+
+function SuggestionEditDialog({
+  projectId,
+  chapterId,
+  suggestion,
+  onClose,
+  onDone
+}: {
+  projectId: string
+  chapterId: string
+  suggestion: Suggestion
+  onClose: () => void
+  onDone: (approved: Suggestion) => void
+}): ReactNode {
+  const t = useT()
+  const [zh, setZh] = useState(suggestion.zh)
+  const [en, setEn] = useState(suggestion.en)
+  const [ar, setAr] = useState(suggestion.ar)
+  const [category, setCategory] = useState(suggestion.category || 'character')
+  const [replaceScope, setReplaceScope] = useState<'all' | 'chapter'>('chapter')
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const saveAndApprove = async (): Promise<void> => {
+    setError(null)
+    setBusy(true)
+    try {
+      const updated = await api.suggestions.update(projectId, suggestion.id, {
+        zh: zh.trim() || undefined,
+        en: en.trim() || undefined,
+        ar: ar.trim() || undefined,
+        category: category || undefined
+      })
+      await api.suggestions.approve(projectId, suggestion.id)
+      const approved = { ...suggestion, ...updated, status: 'approved' as const }
+      const chapter = replaceScope === 'chapter' ? chapterId : undefined
+      const oldAr = suggestion.ar.trim()
+      const oldEn = suggestion.en.trim()
+      const newAr = updated.ar.trim()
+      const newEn = updated.en.trim()
+      const calls: Array<Promise<{ changed: number }>> = []
+      if (oldAr && newAr && oldAr !== newAr) {
+        calls.push(api.glossary.replace(projectId, oldAr, newAr, chapter))
+      }
+      if (oldEn && newEn && oldEn !== newEn) {
+        calls.push(api.glossary.replace(projectId, oldEn, newEn, chapter))
+      }
+      await Promise.all(calls)
+      onDone(approved)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('common.error'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal title={t('editor.editSuggestion')} onClose={onClose}>
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-1">
+          <span className="text-xs font-medium text-slate-500 dark:text-slate-400">{t('glossary.zh')}</span>
+          <Input dir="ltr" value={zh} onChange={(e) => setZh(e.target.value)} aria-label={t('glossary.zh')} />
+        </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="flex flex-col gap-1">
+            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">{t('glossary.en')}</span>
+            <Input dir="ltr" value={en} onChange={(e) => setEn(e.target.value)} aria-label={t('glossary.en')} />
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">{t('glossary.ar')}</span>
+            <Input dir="rtl" value={ar} onChange={(e) => setAr(e.target.value)} aria-label={t('glossary.ar')} />
+          </div>
+        </div>
+        <div className="flex flex-col gap-1">
+          <span className="text-xs font-medium text-slate-500 dark:text-slate-400">{t('glossary.category')}</span>
+          <Select value={category} onChange={(e) => setCategory(e.target.value)} aria-label={t('glossary.category')}>
+            {['character', 'location', 'item', 'technique', 'faction', 'other'].map((c) => (
+              <option key={c} value={c}>
+                {t(`glossary.category.${c}` as TKey)}
+              </option>
+            ))}
+          </Select>
+        </div>
+        <fieldset className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
+          <legend className="px-1 text-xs font-medium text-slate-600 dark:text-slate-300">
+            {t('editor.replaceLabel')}
+          </legend>
+          <div className="flex flex-wrap gap-3 text-sm">
+            <label className="flex cursor-pointer items-center gap-1.5">
+              <input
+                type="radio"
+                name="replace-scope"
+                value="all"
+                checked={replaceScope === 'all'}
+                onChange={() => setReplaceScope('all')}
+                className="size-3.5 text-indigo-600"
+              />
+              {t('editor.replaceAll')}
+            </label>
+            <label className="flex cursor-pointer items-center gap-1.5">
+              <input
+                type="radio"
+                name="replace-scope"
+                value="chapter"
+                checked={replaceScope === 'chapter'}
+                onChange={() => setReplaceScope('chapter')}
+                className="size-3.5 text-indigo-600"
+              />
+              {t('editor.replaceChapter')}
+            </label>
+          </div>
+        </fieldset>
+        {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose} disabled={busy}>
+            {t('common.cancel')}
+          </Button>
+          <Button onClick={() => void saveAndApprove()} disabled={busy || !zh.trim()}>
+            {busy ? t('editor.translating') : t('glossary.save')}
+          </Button>
+        </div>
+      </div>
+    </Modal>
   )
 }
 

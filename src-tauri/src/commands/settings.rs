@@ -1,6 +1,6 @@
 use crate::ipc::{err, ok};
 use crate::models::{AppSettings, UpdateSettingsInput};
-use crate::storage::app_settings::AppSettingsStore;
+use crate::storage::app_settings::{AppSettingsStore, TEMPERATURE_MAX, TEMPERATURE_MIN};
 use crate::storage::key_store::{KeyStore, OsKeyring};
 use crate::AppState;
 use serde_json::json;
@@ -22,6 +22,11 @@ fn validate_settings_update(patch: &UpdateSettingsInput) -> Option<String> {
     }
     if let Some(theme) = &patch.theme {
         if theme != "system" && theme != "light" && theme != "dark" {
+            return Some("Invalid settings update".into());
+        }
+    }
+    if let Some(t) = &patch.temperature {
+        if !t.is_finite() || *t < TEMPERATURE_MIN || *t > TEMPERATURE_MAX {
             return Some("Invalid settings update".into());
         }
     }

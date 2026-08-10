@@ -1,3 +1,4 @@
+use crate::text::count_units;
 use rusqlite::{params, Connection};
 use std::collections::HashMap;
 use std::path::Path;
@@ -293,7 +294,7 @@ impl ProjectStore {
         now: &str,
     ) -> rusqlite::Result<String> {
         let id = uuid::Uuid::new_v4().to_string();
-        let word_count = source_text.chars().count() as i64;
+        let word_count = count_units(source_text);
         self.conn.execute(
             "INSERT INTO chapters (id, number, title, source_text, translation, status, word_count, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, '', 'imported', ?5, ?6, ?6)",
@@ -337,7 +338,7 @@ impl ProjectStore {
         let next_source = source_text.unwrap_or(&current.source_text).to_string();
         let next_translation = translation.unwrap_or(&current.translation).to_string();
         let next_status = status.unwrap_or(&current.status).to_string();
-        let word_count = next_source.chars().count() as i64;
+        let word_count = count_units(&next_source);
         let translated_at = if translation.is_some() {
             Some(now.to_string())
         } else {
@@ -366,6 +367,38 @@ impl ProjectStore {
         self.conn
             .execute("DELETE FROM chapters WHERE id = ?1", params![id])?;
         Ok(())
+    }
+
+    /// Replace `old` with `new` inside chapter translations (all chapters, or a
+    /// single chapter when `chapter_id` is given). Returns the number of chapters
+    /// whose translation actually changed.
+    pub fn replace_in_translations(
+        &self,
+        old: &str,
+        new: &str,
+        chapter_id: Option<&str>,
+        now: &str,
+    ) -> rusqlite::Result<usize> {
+        if old.trim().is_empty() || old == new {
+            return Ok(0);
+        }
+        let chapters = match chapter_id {
+            Some(id) => {
+                let row = self.get_chapter(id)?;
+                vec![row.ok_or_else(|| rusqlite::Error::QueryReturnedNoRows)?]
+            }
+            None => self.list_chapters()?,
+        };
+        let mut changed = 0usize;
+        for c in &chapters {
+            if c.translation.is_empty() || !c.translation.contains(old) {
+                continue;
+            }
+            let next = c.translation.replace(old, new);
+            self.update_chapter(&c.id, None, None, Some(&next), None, now)?;
+            changed += 1;
+        }
+        Ok(changed)
     }
 
     pub fn search_chapters(
@@ -574,6 +607,7 @@ impl ProjectStore {
         &self,
         id: &str,
         status: Option<&str>,
+        zh: Option<&str>,
         en: Option<&str>,
         ar: Option<&str>,
         category: Option<&str>,
@@ -584,9 +618,10 @@ impl ProjectStore {
             return Ok(());
         };
         self.conn.execute(
-            "UPDATE suggestions SET status=?1, en=?2, ar=?3, category=?4, notes=?5 WHERE id=?6",
+            "UPDATE suggestions SET status=?1, zh=?2, en=?3, ar=?4, category=?5, notes=?6 WHERE id=?7",
             params![
                 status.unwrap_or(&current.status),
+                zh.unwrap_or(&current.zh),
                 en.unwrap_or(&current.en),
                 ar.unwrap_or(&current.ar),
                 category.unwrap_or(&current.category),
@@ -712,6 +747,39 @@ mod tests {
             )
             .unwrap();
         assert_eq!(matches, 1);
+    }
+
+    #[test]
+    fn replace_updates_translation_and_scopes_to_chapter() {
+        let (_dir, store) = open_temp();
+        let c1 = store.insert_chapter(1, "C1", "第一章", "t").unwrap();
+        let c2 = store.insert_chapter(2, "C2", "第二章", "t").unwrap();
+        store
+            .update_chapter(&c1, None, None, Some("كان البطلُ يغسل السيف الجديد"), Some("translated"), "t1")
+            .unwrap();
+        store
+            .update_chapter(&c2, None, None, Some("صعد الجبل"), Some("translated"), "t2")
+            .unwrap();
+
+        let changed = store.replace_in_translations("السيف", "الخنجَر", None, "t3").unwrap();
+        assert_eq!(changed, 1);
+        assert!(store.get_chapter(&c1).unwrap().unwrap().translation.contains("الخنجَر"));
+        assert!(!store.get_chapter(&c1).unwrap().unwrap().translation.contains("السيف"));
+
+        let scoped = store.replace_in_translations("الجبل", "الوادي", Some(&c2), "t4").unwrap();
+        assert_eq!(scoped, 1);
+        assert!(store.get_chapter(&c2).unwrap().unwrap().translation.contains("الوادي"));
+        let scoped_miss = store.replace_in_translations("الجبل", "الوادي", Some(&c1), "t5").unwrap();
+        assert_eq!(scoped_miss, 0);
+    }
+
+    #[test]
+    fn word_count_is_adaptive_by_script() {
+        let (_dir, store) = open_temp();
+        let c_zh = store.insert_chapter(1, "C1", "他睁开了眼睛", "t").unwrap();
+        let c_en = store.insert_chapter(2, "C2", "He opened his eyes and saw the mountain.", "t").unwrap();
+        assert_eq!(store.get_chapter(&c_zh).unwrap().unwrap().word_count, 6);
+        assert_eq!(store.get_chapter(&c_en).unwrap().unwrap().word_count, 8);
     }
 
     #[test]

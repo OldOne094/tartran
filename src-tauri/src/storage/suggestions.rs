@@ -82,6 +82,7 @@ impl<'a> SuggestionsManager<'a> {
             .update_suggestion(
                 suggestion_id,
                 patch.status.as_deref(),
+                patch.zh.as_deref().map(str::trim),
                 patch.en.as_deref().map(str::trim),
                 patch.ar.as_deref().map(str::trim),
                 patch.category.as_deref().map(str::trim),
@@ -145,7 +146,7 @@ impl<'a> SuggestionsManager<'a> {
             }
         };
         store
-            .update_suggestion(suggestion_id, Some("approved"), None, None, None, None)
+            .update_suggestion(suggestion_id, Some("approved"), None, None, None, None, None)
             .map_err(|e| AppError::UpdateFailed(e.to_string()))?;
         let g = store
             .get_glossary(&glossary_id)
@@ -161,7 +162,7 @@ impl<'a> SuggestionsManager<'a> {
     pub fn reject(&self, project_id: &str, suggestion_id: &str) -> AppResult<Suggestion> {
         let store = self.store_for(project_id)?;
         store
-            .update_suggestion(suggestion_id, Some("rejected"), None, None, None, None)
+            .update_suggestion(suggestion_id, Some("rejected"), None, None, None, None, None)
             .map_err(|e| AppError::UpdateFailed(e.to_string()))?;
         let row = store
             .get_suggestion(suggestion_id)

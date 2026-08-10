@@ -7,6 +7,8 @@ export interface AppSettings {
   workspacePath: string
   uiLanguage: UiLanguage
   theme: Theme
+  removeTashkeel: boolean
+  temperature: number
 }
 
 export interface ProjectMeta {
@@ -138,6 +140,10 @@ export interface GlossarySearchResult {
   snippet: string
 }
 
+export interface GlossaryReplaceResult {
+  changed: number
+}
+
 export type SuggestionStatus = 'pending' | 'approved' | 'rejected'
 
 export interface Suggestion {
@@ -165,6 +171,7 @@ export interface CreateSuggestionInput {
 
 export interface UpdateSuggestionInput {
   status?: SuggestionStatus
+  zh?: string
   en?: string
   ar?: string
   category?: string
